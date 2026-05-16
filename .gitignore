@@ -4,3 +4,5 @@ frontend/node_modules/
 backend/pesquisa.db
 frontend/dist/
 *.log
+backend/pesquisa.db-shm
+backend/pesquisa.db-wal

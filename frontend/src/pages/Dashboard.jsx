@@ -195,8 +195,7 @@ export default function Dashboard() {
                     labelFormatter={(l) => `Nota ${l}`}
                   />
                   <Bar dataKey="count" radius={[4, 4, 0, 0]} shape={(props) => {
-                    const score = data.npsDistribution[data.npsDistribution.findIndex(d => d.score === props.score)]?.score ?? props.index
-                    return <CustomBar {...props} score={score} />
+                    return <CustomBar {...props} score={props.score} />
                   }} />
                 </BarChart>
               </ResponsiveContainer>
