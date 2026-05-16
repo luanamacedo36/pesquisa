@@ -2,7 +2,7 @@ import express from 'express';
 import cors from 'cors';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
-import db from './db.js';
+import pool from './db.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -13,156 +13,103 @@ const PORT = process.env.PORT || 3001;
 app.use(cors());
 app.use(express.json());
 
-// Serve static frontend files in production
 const distPath = join(__dirname, '../frontend/dist');
 app.use(express.static(distPath));
 
-// POST /api/responses — save a survey response
-app.post('/api/responses', (req, res) => {
+// POST /api/responses
+app.post('/api/responses', async (req, res) => {
   try {
     const { nps, recepcao, tempo_espera, atendimento, limpeza, comentario } = req.body;
 
-    // Validate required fields
-    if (nps === undefined || nps === null) {
-      return res.status(400).json({ error: 'Campo NPS é obrigatório.' });
-    }
-    if (!recepcao) {
-      return res.status(400).json({ error: 'Campo recepção é obrigatório.' });
-    }
-    if (!tempo_espera) {
-      return res.status(400).json({ error: 'Campo tempo de espera é obrigatório.' });
-    }
-    if (!atendimento) {
-      return res.status(400).json({ error: 'Campo atendimento é obrigatório.' });
-    }
-    if (!limpeza) {
-      return res.status(400).json({ error: 'Campo limpeza é obrigatório.' });
-    }
+    if (nps === undefined || nps === null) return res.status(400).json({ error: 'Campo NPS é obrigatório.' });
+    if (!recepcao)      return res.status(400).json({ error: 'Campo recepção é obrigatório.' });
+    if (!tempo_espera)  return res.status(400).json({ error: 'Campo tempo de espera é obrigatório.' });
+    if (!atendimento)   return res.status(400).json({ error: 'Campo atendimento é obrigatório.' });
+    if (!limpeza)       return res.status(400).json({ error: 'Campo limpeza é obrigatório.' });
 
-    // Validate ranges
-    if (nps < 0 || nps > 10) {
-      return res.status(400).json({ error: 'NPS deve ser entre 0 e 10.' });
-    }
+    if (nps < 0 || nps > 10) return res.status(400).json({ error: 'NPS deve ser entre 0 e 10.' });
     for (const [field, value] of Object.entries({ recepcao, tempo_espera, atendimento, limpeza })) {
-      if (value < 1 || value > 5) {
-        return res.status(400).json({ error: `Campo ${field} deve ser entre 1 e 5.` });
-      }
+      if (value < 1 || value > 5) return res.status(400).json({ error: `Campo ${field} deve ser entre 1 e 5.` });
     }
 
-    const stmt = db.prepare(`
-      INSERT INTO responses (nps, recepcao, tempo_espera, atendimento, limpeza, comentario)
-      VALUES (?, ?, ?, ?, ?, ?)
-    `);
-
-    const result = stmt.run(
-      Number(nps),
-      Number(recepcao),
-      Number(tempo_espera),
-      Number(atendimento),
-      Number(limpeza),
-      comentario || null
+    const result = await pool.query(
+      `INSERT INTO responses (nps, recepcao, tempo_espera, atendimento, limpeza, comentario)
+       VALUES ($1, $2, $3, $4, $5, $6) RETURNING id`,
+      [Number(nps), Number(recepcao), Number(tempo_espera), Number(atendimento), Number(limpeza), comentario || null]
     );
 
-    res.status(201).json({
-      success: true,
-      id: result.lastInsertRowid,
-      message: 'Resposta salva com sucesso!'
-    });
+    res.status(201).json({ success: true, id: result.rows[0].id, message: 'Resposta salva com sucesso!' });
   } catch (error) {
     console.error('Error saving response:', error);
     res.status(500).json({ error: 'Erro interno ao salvar a resposta.' });
   }
 });
 
-// GET /api/dashboard — return aggregated data
-app.get('/api/dashboard', (req, res) => {
+// GET /api/dashboard
+app.get('/api/dashboard', async (req, res) => {
   try {
-    // Total count
-    const totalRow = db.prepare('SELECT COUNT(*) as total FROM responses').get();
-    const total = totalRow.total;
+    const { rows: [{ total }] } = await pool.query('SELECT COUNT(*)::int AS total FROM responses');
 
     if (total === 0) {
       return res.json({
-        npsScore: null,
-        total: 0,
-        promoters: 0,
-        passives: 0,
-        detractors: 0,
-        promotersPercent: 0,
-        passivesPercent: 0,
-        detractorsPercent: 0,
-        averages: {
-          recepcao: 0,
-          tempo_espera: 0,
-          atendimento: 0,
-          limpeza: 0
-        },
+        npsScore: null, total: 0,
+        promoters: 0, passives: 0, detractors: 0,
+        promotersPercent: 0, passivesPercent: 0, detractorsPercent: 0,
+        averages: { recepcao: 0, tempo_espera: 0, atendimento: 0, limpeza: 0 },
         npsDistribution: Array.from({ length: 11 }, (_, i) => ({ score: i, count: 0 })),
-        recentResponses: []
+        recentResponses: [],
       });
     }
 
-    // NPS category counts
-    const promoters = db.prepare('SELECT COUNT(*) as count FROM responses WHERE nps >= 9').get().count;
-    const passives = db.prepare('SELECT COUNT(*) as count FROM responses WHERE nps >= 7 AND nps <= 8').get().count;
-    const detractors = db.prepare('SELECT COUNT(*) as count FROM responses WHERE nps <= 6').get().count;
+    const [catsResult, avgsResult, distResult, recentResult] = await Promise.all([
+      pool.query(`
+        SELECT
+          COUNT(*) FILTER (WHERE nps >= 9)::int              AS promoters,
+          COUNT(*) FILTER (WHERE nps >= 7 AND nps <= 8)::int AS passives,
+          COUNT(*) FILTER (WHERE nps <= 6)::int              AS detractors
+        FROM responses
+      `),
+      pool.query(`
+        SELECT
+          ROUND(AVG(recepcao)::numeric, 1)     AS recepcao,
+          ROUND(AVG(tempo_espera)::numeric, 1) AS tempo_espera,
+          ROUND(AVG(atendimento)::numeric, 1)  AS atendimento,
+          ROUND(AVG(limpeza)::numeric, 1)      AS limpeza
+        FROM responses
+      `),
+      pool.query(`
+        SELECT nps AS score, COUNT(*)::int AS count
+        FROM responses GROUP BY nps ORDER BY nps
+      `),
+      pool.query(`
+        SELECT id, nps, recepcao, tempo_espera, atendimento, limpeza, comentario, created_at
+        FROM responses ORDER BY created_at DESC LIMIT 20
+      `),
+    ]);
 
-    // NPS score calculation
-    const npsScore = ((promoters - detractors) / total) * 100;
+    const { promoters, passives, detractors } = catsResult.rows[0];
+    const avgs = avgsResult.rows[0];
+    const npsScore = Math.round(((promoters - detractors) / total) * 1000) / 10;
 
-    // Averages
-    const averagesRow = db.prepare(`
-      SELECT
-        AVG(recepcao) as recepcao,
-        AVG(tempo_espera) as tempo_espera,
-        AVG(atendimento) as atendimento,
-        AVG(limpeza) as limpeza
-      FROM responses
-    `).get();
-
-    // NPS distribution (count per score 0-10)
-    const distributionRows = db.prepare(`
-      SELECT nps as score, COUNT(*) as count
-      FROM responses
-      GROUP BY nps
-      ORDER BY nps
-    `).all();
-
-    // Build full distribution array with 0s for missing scores
-    const distributionMap = {};
-    distributionRows.forEach(row => {
-      distributionMap[row.score] = row.count;
-    });
-    const npsDistribution = Array.from({ length: 11 }, (_, i) => ({
-      score: i,
-      count: distributionMap[i] || 0
-    }));
-
-    // Recent 20 responses
-    const recentResponses = db.prepare(`
-      SELECT id, nps, recepcao, tempo_espera, atendimento, limpeza, comentario, created_at
-      FROM responses
-      ORDER BY created_at DESC
-      LIMIT 20
-    `).all();
+    const distMap = {};
+    distResult.rows.forEach(r => { distMap[r.score] = r.count; });
+    const npsDistribution = Array.from({ length: 11 }, (_, i) => ({ score: i, count: distMap[i] || 0 }));
 
     res.json({
-      npsScore: Math.round(npsScore * 10) / 10,
+      npsScore,
       total,
-      promoters,
-      passives,
-      detractors,
-      promotersPercent: Math.round((promoters / total) * 100 * 10) / 10,
-      passivesPercent: Math.round((passives / total) * 100 * 10) / 10,
-      detractorsPercent: Math.round((detractors / total) * 100 * 10) / 10,
+      promoters, passives, detractors,
+      promotersPercent: Math.round((promoters / total) * 1000) / 10,
+      passivesPercent:  Math.round((passives  / total) * 1000) / 10,
+      detractorsPercent: Math.round((detractors / total) * 1000) / 10,
       averages: {
-        recepcao: Math.round(averagesRow.recepcao * 10) / 10,
-        tempo_espera: Math.round(averagesRow.tempo_espera * 10) / 10,
-        atendimento: Math.round(averagesRow.atendimento * 10) / 10,
-        limpeza: Math.round(averagesRow.limpeza * 10) / 10
+        recepcao:     Number(avgs.recepcao),
+        tempo_espera: Number(avgs.tempo_espera),
+        atendimento:  Number(avgs.atendimento),
+        limpeza:      Number(avgs.limpeza),
       },
       npsDistribution,
-      recentResponses
+      recentResponses: recentResult.rows,
     });
   } catch (error) {
     console.error('Error fetching dashboard data:', error);
@@ -170,7 +117,7 @@ app.get('/api/dashboard', (req, res) => {
   }
 });
 
-// SPA fallback — must come after API routes
+// SPA fallback
 app.get('*', (_req, res) => {
   res.sendFile(join(distPath, 'index.html'));
 });
