@@ -1,12 +1,21 @@
 import express from 'express';
 import cors from 'cors';
+import { fileURLToPath } from 'url';
+import { dirname, join } from 'path';
 import db from './db.js';
 
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
+
 const app = express();
-const PORT = 3001;
+const PORT = process.env.PORT || 3001;
 
 app.use(cors());
 app.use(express.json());
+
+// Serve static frontend files in production
+const distPath = join(__dirname, '../frontend/dist');
+app.use(express.static(distPath));
 
 // POST /api/responses — save a survey response
 app.post('/api/responses', (req, res) => {
@@ -159,6 +168,11 @@ app.get('/api/dashboard', (req, res) => {
     console.error('Error fetching dashboard data:', error);
     res.status(500).json({ error: 'Erro interno ao buscar dados do dashboard.' });
   }
+});
+
+// SPA fallback — must come after API routes
+app.get('*', (_req, res) => {
+  res.sendFile(join(distPath, 'index.html'));
 });
 
 app.listen(PORT, () => {

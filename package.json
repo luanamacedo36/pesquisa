@@ -2,10 +2,10 @@
   "name": "pesquisa-saude",
   "version": "1.0.0",
   "scripts": {
+    "build": "cd frontend && npm install && npm run build",
+    "start": "node backend/server.js",
     "install:all": "cd backend && npm install && cd ../frontend && npm install",
     "dev:backend": "cd backend && npm run dev",
-    "dev:frontend": "cd frontend && npm run dev",
-    "start:backend": "cd backend && npm start",
-    "build:frontend": "cd frontend && npm run build"
+    "dev:frontend": "cd frontend && npm run dev"
   }
 }

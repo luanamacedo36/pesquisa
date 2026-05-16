@@ -76,7 +76,7 @@ export default function Dashboard() {
     setLoading(true)
     setError(null)
     try {
-      const res = await fetch('http://localhost:3001/api/dashboard')
+      const res = await fetch('/api/dashboard')
       if (!res.ok) throw new Error('Erro ao buscar dados do servidor.')
       const json = await res.json()
       setData(json)
